@@ -1,0 +1,13 @@
+db:
+  username: roller
+  password: changeme
+smtp:
+  host: foo.example.com
+  port: 465
+  auth: true
+  user: jane
+  password: jane_password
+  socketFactoryClass: javax.net.ssl.SSLSocketFactory
+  debug: true
+httpd:
+  servername: localhost

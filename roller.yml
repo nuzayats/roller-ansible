@@ -1,0 +1,150 @@
+# This ansible playbook sets up an Apache Roller instance which runs with a Tomcat instance and a PostgreSQL database.
+#
+# Tested with:
+#   * Ubuntu 16.04.4 LTS (GNU/Linux 4.4.0-121-generic x86_64) @ http://digitalocean.com
+#   * Ansible 2.4.3.0
+#
+# Usage:
+#   1. Make sure that you can log into your server with 'ssh root@yourserver.example.com' without a password
+#   2. Download a Roller release package and place the WAR file it contains as "files/roller.war"
+#   3. Edit "hosts" file and change the hostname to yours
+#   4. Edit vars.yml to suit your needs (especially if you have a SMTP server)
+#   5. Run "ansible-playbook roller.yml"
+#   6. Open http://yourserver.example.com/ and proceed with setting up Roller
+#
+# Example:
+#   $ ansible-playbook roller.yml
+#   $ ansible-playbook roller.yml --tags war  # when you only want to deploy the roller WAR file
+#
+# Notes:
+#   It's recommended to set up SSL with https://letsencrypt.org if you want to run your own blog with Roller. It should be super easy as this setup consists of the Apache layer.
+#
+#   Don't forget to set installation.type=manual in roller-custom.properties when you finish the setting up process. You can deploy the file with "ansible-playbook roller.yml --tags roller"
+#
+#   If something goes wrong, you may want to check the following:
+#      * /var/log/tomcat8/catalina.out
+#      * /usr/local/rollerdata/roller.log
+
+- name: prepare
+  hosts: roller_server
+  gather_facts: false
+  sudo: True
+  tasks:
+  - name: install python 2
+    raw: test -e /usr/bin/python || (apt -y update && apt install -y python-minimal)
+
+- name: setup roller
+  vars_files:
+    - vars.yml
+  hosts: roller_server
+  sudo: True
+  tasks:
+
+  - name: install apache2
+    apt: name=apache2 update_cache=yes state=latest
+    tags:
+      - apache
+
+  - name: install jdk
+    apt: name=openjdk-8-jdk
+    tags:
+      - tomcat
+
+  - name: install tomcat
+    apt: name=tomcat8
+    tags:
+      - tomcat
+
+  - name: clean webapps ROOT.war
+    file:
+      state: absent
+      path: /var/lib/tomcat8/webapps/ROOT.war
+    tags:
+      - tomcat
+
+  - name: clean webapps ROOT
+    file:
+      state: absent
+      path: /var/lib/tomcat8/webapps/ROOT/
+    tags:
+      - tomcat
+
+  - name: Install list of packages
+    apt: name={{item}} state=installed
+    with_items:
+         - postgresql
+         - postgresql-contrib
+         - python-psycopg2
+
+  - name: download some dependencies
+    get_url: url={{ item.url }} dest=/usr/share/tomcat8/lib
+    with_items:
+      - { url: 'https://repo1.maven.org/maven2/org/postgresql/postgresql/42.2.2/postgresql-42.2.2.jar'}
+      - { url: 'https://repo1.maven.org/maven2/javax/mail/mail/1.5.0-b01/mail-1.5.0-b01.jar'}
+
+  - name: install module for apache
+    apache2_module:
+      state: present
+      name: proxy_ajp
+    notify: restart apache
+
+  - name: enable configuration for apache
+    template: src=files/000-default.conf.j2 dest=/etc/apache2/sites-available/000-default.conf
+    notify: restart apache
+
+  - name: setup database user
+    become: true
+    become_user: postgres
+    postgresql_user: name={{ db.username }} password={{ db.password }} role_attr_flags=SUPERUSER
+    tags:
+      - db
+
+  - name: Setup postgres database
+    become: true
+    become_user: postgres
+    postgresql_db: name=roller state=present owner=roller
+    tags:
+      - db
+
+  - name: put some files for tomcat
+    copy: src={{ item.src }} dest={{ item.dest }}
+    notify: restart tomcat
+    tags:
+      - tomcat
+    with_items: 
+      - { src: 'files/server.xml', dest: '/etc/tomcat8' }
+      - { src: 'files/tomcat8', dest: '/etc/default/tomcat8' }
+
+  - name: put context.xml
+    template: src=files/context.xml.j2 dest=/etc/tomcat8/context.xml
+    notify: restart tomcat
+    tags:
+      - tomcat
+
+  - name: create rollerdata directory
+    file:
+      path: /usr/local/rollerdata
+      state: directory
+      owner: tomcat8
+    tags:
+      - roller
+
+  - name: copy roller-custom.properties
+    copy: src=files/roller-custom.properties dest=/usr/share/tomcat8/lib
+    notify: restart tomcat
+    tags:
+      - roller
+
+  - name: deploy roller
+    copy: src=files/roller.war dest=/var/lib/tomcat8/webapps/ROOT.war
+    notify: restart tomcat
+    tags:
+      - roller
+      - war
+
+  handlers:
+  - name: restart tomcat
+    service: name=tomcat8 state=restarted
+
+  - name: restart apache
+    service: name=apache2 state=restarted

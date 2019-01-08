@@ -1,0 +1,2 @@
+[roller_server]
+yourserver.example.com ansible_user=root
