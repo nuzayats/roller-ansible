@@ -123,9 +123,8 @@
                resourceName="UserDatabase"/>
       </Realm>
 
-      <Host name="localhost"  appBase="webapps"
+      <Host name="localhost"  appBase="mywebapps"
             unpackWARs="true" autoDeploy="true">
-
         <!-- SingleSignOn valve, share authentication between web applications
              Documentation at: /docs/config/valve.html -->
         <!--

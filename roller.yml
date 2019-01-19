@@ -96,22 +96,6 @@
 
   - name: install tomcat
     apt: name=tomcat8
-    tags:
-      - tomcat
-
-  - name: clean webapps ROOT.war
-    file:
-      state: absent
-      path: /var/lib/tomcat8/webapps/ROOT.war
-    tags:
-      - tomcat
-
-  - name: clean webapps ROOT
-    file:
-      state: absent
-      path: /var/lib/tomcat8/webapps/ROOT/
-    tags:
-      - tomcat
 
   - name: Install list of packages
     apt: name={{item}} state=installed
@@ -119,6 +103,7 @@
          - postgresql
          - postgresql-contrib
          - python-psycopg2
+         - unzip
 
   - name: download some dependencies
     get_url: url={{ item.url }} dest=/usr/share/tomcat8/lib
@@ -140,21 +125,15 @@
     become: true
     become_user: postgres
     postgresql_user: name={{ db.username }} password={{ db.password }} role_attr_flags=SUPERUSER
-    tags:
-      - db
 
   - name: Setup postgres database
     become: true
     become_user: postgres
     postgresql_db: name=roller state=present owner=roller
-    tags:
-      - db
 
   - name: put some files for tomcat
     copy: src={{ item.src }} dest={{ item.dest }}
     notify: restart tomcat
-    tags:
-      - tomcat
     with_items: 
       - { src: 'files/server.xml', dest: '/etc/tomcat8' }
       - { src: 'files/tomcat8', dest: '/etc/default/tomcat8' }
@@ -162,16 +141,12 @@
   - name: put context.xml
     template: src=files/context.xml.j2 dest=/etc/tomcat8/context.xml
     notify: restart tomcat
-    tags:
-      - tomcat
 
   - name: create rollerdata directory
     file:
       path: /usr/local/rollerdata
       state: directory
       owner: tomcat8
-    tags:
-      - roller
 
   - name: copy roller-custom.properties
     copy: src=files/roller-custom.properties dest=/usr/share/tomcat8/lib
@@ -179,11 +154,56 @@
     tags:
       - roller
 
-  - name: deploy roller
-    copy: src=files/roller.war dest=/var/lib/tomcat8/webapps/ROOT.war
-    notify: restart tomcat
+  - name: create mywebapps directory
+    file:
+      path: /var/lib/tomcat8/mywebapps
+      state: directory
+      owner: tomcat8
+
+  - name: upload roller.war
+    copy: src=files/roller.war dest=/usr/local/rollerdata
+    register: uploadwar
     tags:
-      - roller
+      - war
+
+  - name: Stop service tomcat, if started
+    service:
+      name: tomcat8
+      state: stopped
+    when: uploadwar.changed
+    tags:
+      - war
+  
+  - name: remove old app
+    file:
+      state: absent
+      path: /var/lib/tomcat8/mywebapps/ROOT/
+    when: uploadwar.changed
+    tags:
+      - war
+
+  - name: create app dir
+    file:
+      path: /var/lib/tomcat8/mywebapps/ROOT/
+      state: directory
+      owner: tomcat8
+      mode: 0755
+    when: uploadwar.changed
+    tags:
+      - war
+
+  - name: Unzip WAR file
+    unarchive: src=/usr/local/rollerdata/roller.war dest=/var/lib/tomcat8/mywebapps/ROOT/ copy=no mode=0755 owner=tomcat8 group=tomcat8
+    when: uploadwar.changed
+    tags:
+      - war
+
+  - name: Start service tomcat, if stopped
+    service:
+      name: tomcat8
+      state: started
+    when: uploadwar.changed
+    tags:
       - war
 
   handlers:
